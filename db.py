@@ -1,4 +1,5 @@
 import sqlite3 as sq
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,3 +18,7 @@ def execute_query(query: str, *args: Any) -> None | list[sq.Row]:
     elif query.startswith('insert'):
         return cur.lastrowid
     return None
+
+
+def insert_message(user_id: int, sender: str, text: str) -> None:
+    execute_query('insert into messages values (?, ?, ?, ?)', user_id, sender, text, datetime.now().timestamp())

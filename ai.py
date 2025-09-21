@@ -1,17 +1,15 @@
-from datetime import datetime
-
-from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramBadRequest
 from google import genai
 from google.genai.errors import ServerError
 from google.genai.types import GenerateContentResponse
 from lxml import html
 from aiogram import Router, Bot
 from aiogram.types import Message
-from aiogram.filters import CommandStart
+from aiogram.enums import ChatAction
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import CommandStart, Command
 
 from config import API_KEY, PROMPT
-from db import execute_query
+from db import execute_query, insert_message
 
 client = genai.Client(api_key=API_KEY)
 router = Router()
@@ -47,13 +45,18 @@ async def cmd_start(message: Message):
     await message.answer('старт')
 
 
+@router.message(Command('new'))
+async def cmd_new(message: Message):
+    await message.answer('Создан новый диалог')
+    execute_query('delete from messages where user_id = ?', message.from_user.id)
+
+
 @router.message()
 async def answer_message(message: Message, bot: Bot):
     mess = await message.answer('⏳ Думаю...')
     await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-    execute_query('insert into history values (?, ?, ?, ?)', message.from_user.id, 'user', message.html_text,
-                  datetime.now().timestamp())
-    contents = execute_query('select * from history where user_id = ? order by timestamp', message.from_user.id)
+    insert_message(message.from_user.id, 'user', message.html_text)
+    contents = execute_query('select * from messages where user_id = ? order by timestamp', message.from_user.id)
     dialogue_history = []
     for content in contents:
         dialogue_history.append({'role': content['sender'], 'parts': [{"text": content['content']}]})
@@ -61,21 +64,19 @@ async def answer_message(message: Message, bot: Bot):
     current_query[0]['text'] = PROMPT + current_query[0]['text']
     response = send_response(dialogue_history)
     text = response.text if response else 'Ошибка'
-    execute_query('insert into history values (?, ?, ?, ?)', message.from_user.id, 'model', text,
-                  datetime.now().timestamp())
+    insert_message(message.from_user.id, 'model', text)
     if len(text) > 4096:
         sep = '\n\n'
         paragraphs = text.split(sep)
-        temp = ''
+        mess_text = ''
         texts = []
         for p in paragraphs:
-            if p.find('<code>') != -1 and p.find('<code>') > p.find('</code>'):
-                p = '<code>' + p
-            if len(temp + sep + p) > 4090:
-                texts.append(correct_html(temp))
-                temp = p
+            if len(mess_text + sep + p) > 4090:
+                texts.append(correct_html(mess_text))
+                mess_text = p
             else:
-                temp += sep + p
+                mess_text += sep + p
+        texts.append(correct_html(mess_text))
         texts = [text for text in texts if text]
         try:
             if not texts:
@@ -89,4 +90,3 @@ async def answer_message(message: Message, bot: Bot):
             pass
     else:
         await mess.edit_text(correct_html(text), parse_mode='HTML')
-
